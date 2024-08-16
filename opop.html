@@ -1,0 +1,114 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport"
+        content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0">
+  <title>Hello WebXR!</title>
+
+  <!-- three.js -->
+  <script src="https://unpkg.com/three@0.126.0/build/three.js"></script>
+</head>
+<body>
+
+<!-- Starting an immersive WebXR session requires user interaction.
+    We start this one with a simple button. -->
+<button onclick="activateXR()">Start Hello WebXR</button>
+<script>
+async function activateXR() {
+    // Add a canvas element and initialize a WebGL context that is compatible with WebXR.
+    const canvas = document.createElement("canvas");
+    document.body.appendChild(canvas);
+    const gl = canvas.getContext("webgl", {xrCompatible: true});
+    
+    const scene = new THREE.Scene();
+
+    // Create the coin and add it to the demo scene.
+    const coinGeometry = new THREE.CylinderBufferGeometry(0.1, 0.1, 0.02, 32);
+    const coinMaterial = new THREE.MeshBasicMaterial({color: 0xffd700});
+    const coin = new THREE.Mesh(coinGeometry, coinMaterial);
+    coin.position.set(1, 1, 1);
+    coin.rotation.x = Math.PI / 2;  // Rotate the coin to make it vertical
+    scene.add(coin);
+
+    // Set up the WebGLRenderer, which handles rendering to the session's base layer.
+    const renderer = new THREE.WebGLRenderer({
+        alpha: true,
+        preserveDrawingBuffer: true,
+        canvas: canvas,
+        context: gl
+    });
+    renderer.autoClear = false;
+
+    const camera = new THREE.PerspectiveCamera();
+    camera.matrixAutoUpdate = false;
+
+    // Initialize a WebXR session using "immersive-ar".
+    const session = await navigator.xr.requestSession("immersive-ar");
+    session.updateRenderState({
+        baseLayer: new XRWebGLLayer(session, gl)
+    });
+
+    // A 'local' reference space has a native origin that is located
+    // near the viewer's position at the time the session was created.
+    const referenceSpace = await session.requestReferenceSpace('local');
+
+    // Create a render loop that allows us to draw on the AR view.
+    const onXRFrame = (time, frame) => {
+        // Queue up the next draw request.
+        session.requestAnimationFrame(onXRFrame);
+
+        // Bind the graphics framebuffer to the baseLayer's framebuffer
+        gl.bindFramebuffer(gl.FRAMEBUFFER, session.renderState.baseLayer.framebuffer);
+
+        // Retrieve the pose of the device.
+        // XRFrame.getViewerPose can return null while the session attempts to establish tracking.
+        const pose = frame.getViewerPose(referenceSpace);
+        if (pose) {
+            // In mobile AR, we only have one view.
+            const view = pose.views[0];
+
+            const viewport = session.renderState.baseLayer.getViewport(view);
+            renderer.setSize(viewport.width, viewport.height);
+
+            camera.matrix.fromArray(view.transform.matrix);
+            camera.projectionMatrix.fromArray(view.projectionMatrix);
+            camera.updateMatrixWorld(true);
+
+            coin.rotation.z += 0.01;
+
+            renderer.render(scene, camera);
+        }
+    };
+    session.requestAnimationFrame(onXRFrame);
+
+    // Handle click events within the WebXR session
+    const handleSelect = (event) => {
+        const frame = event.frame;
+        const refSpace = event.referenceSpace || referenceSpace;
+        const viewerPose = frame.getViewerPose(refSpace);
+
+        if (viewerPose) {
+            const view = viewerPose.views[0];
+            const raycaster = new THREE.Raycaster();
+            raycaster.ray.origin.set(view.transform.position.x, view.transform.position.y, view.transform.position.z);
+            raycaster.ray.direction.set(view.transform.orientation.x, view.transform.orientation.y, view.transform.orientation.z).normalize();
+            
+            const intersects = raycaster.intersectObjects(scene.children);
+            if (intersects.length > 0) {
+                // If the coin is clicked, remove it from the scene
+                scene.remove(intersects[0].object);
+            }
+        }
+    };
+
+    session.addEventListener('select', handleSelect);
+
+    const inputSource = session.inputSources[0];
+    if (inputSource) {
+        inputSource.onselect = handleSelect;
+    }
+}
+</script>
+</body>
+</html>
